@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Database CRUD</title>
+</head>
+<body>
+
+<h1>Database CRUD Application</h1>
+
+<div>
+    <label>Enter Table Name:</label>
+    <input type="text" id="tableName" placeholder="Enter table name">
+    <button onclick="loadTableData()">Load Table</button>
+    <button id="new-btn" onclick="showNewRecordForm()" style="display:none;">New</button>
+    <div id="message"></div>
+</div>
+
+<div id="tableContainer"></div>
+
+<!-- Popup Modal -->
+<div id="modal" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); border:1px solid black; padding:20px; background:white; z-index:1000; min-width:350px;">
+    <h2 id="modalTitle">Add New Record</h2>
+    <div id="formFields"></div>
+    <button onclick="saveRecord()">Save</button>
+    <button onclick="closeModal()">Cancel</button>
+</div>
+
+<div id="overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:999;"></div>
+
+<script>
+    let currentTable = null;
+    let tableColumns = [];
+    let primaryKey = null;
+    let isEditMode = false;
+    let tableData = [];
+
+    const SERVER_URL = 'http://138.68.140.83:3001';
+
+    document.getElementById('overlay').addEventListener('click', closeModal);
+
+    // ── Escape HTML to prevent XSS when injecting into innerHTML ──
+    function escapeHtml(str) {
+        if (str === null || str === undefined) return '';
+        const div = document.createElement('div');
+        div.appendChild(document.createTextNode(String(str)));
+        return div.innerHTML;
+    }
+
+    // ── Load table from server ──
+    function loadTableData() {
+        const tableName = document.getElementById('tableName').value.trim();
+        const messageDiv = document.getElementById('message');
+
+        if (!tableName) {
+            messageDiv.textContent = 'Please enter table name';
+            return;
+        }
+
+        fetch(`${SERVER_URL}/displayRecords`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ table: tableName })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.error) {
+                messageDiv.textContent = 'Error: ' + data.error;
+                return;
+            }
+
+            currentTable = tableName;
+            tableColumns = data.columns;
+            primaryKey = data.primaryKey;
+            tableData = data.rows;
+
+            displayTable(data.columns, data.rows);
+            document.getElementById('new-btn').style.display = 'inline-block';
+            messageDiv.textContent = 'Table loaded: ' + tableName;
+        })
+        .catch(err => {
+            messageDiv.textContent = 'Error: ' + err.message;
+        });
+    }
+
+    // ── Render table rows ──
+    function displayTable(columns, rows) {
+        const container = document.getElementById('tableContainer');
+
+        if (columns.length === 0) {
+            container.innerHTML = '<p>No data found</p>';
+            return;
+        }
+
+        let html = '<table border="1" cellpadding="6" cellspacing="0">';
+        html += '<thead><tr>';
+        columns.forEach(col => {
+            html += '<th>' + escapeHtml(col) + '</th>';
+        });
+        html += '<th>Update</th><th>Delete</th>';
+        html += '</tr></thead><tbody>';
+
+        const pkIndex = tableColumns.indexOf(primaryKey);
+
+        rows.forEach((row, rowIndex) => {
+            html += '<tr>';
+            row.forEach(cell => {
+                html += '<td>' + escapeHtml(cell) + '</td>';
+            });
+
+            // FIX: store pkValue as a data-index on the button instead of
+            // embedding it inline — avoids ALL escaping/double-escape issues
+            html += `<td><button onclick="editRecord(${rowIndex})">Update</button></td>`;
+            html += `<td><button onclick="deleteRecord(${rowIndex})">Delete</button></td>`;
+            html += '</tr>';
+        });
+
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    }
+
+    // ── New record form ──
+    function showNewRecordForm() {
+        if (!currentTable) {
+            document.getElementById('message').textContent = 'Please load a table first';
+            return;
+        }
+
+        isEditMode = false;
+        document.getElementById('modalTitle').textContent = 'Add New Record';
+        generateForm(null);
+        openModal();
+    }
+
+    // ── Edit: open modal and populate with row data ──
+    // FIX: use rowIndex instead of pkValue to find the row — no escaping issues
+    function editRecord(rowIndex) {
+        const row = tableData[rowIndex];
+
+        if (!row) {
+            alert('Record not found. Please reload the table.');
+            return;
+        }
+
+        isEditMode = true;
+        document.getElementById('modalTitle').textContent = 'Edit Record';
+        generateForm(row);
+        openModal();
+    }
+
+    // ── Delete with confirmation ──
+    // FIX: use rowIndex to get pkValue from cached tableData reliably
+    function deleteRecord(rowIndex) {
+        const row = tableData[rowIndex];
+
+        if (!row) {
+            alert('Record not found. Please reload the table.');
+            return;
+        }
+
+        const pkIndex = tableColumns.indexOf(primaryKey);
+        const pkValue = row[pkIndex];
+
+        // FIX: show what is being deleted in the confirmation message
+        if (!confirm(`Are you sure you want to delete this record?\n\n${primaryKey}: ${pkValue}`)) {
+            return;
+        }
+
+        fetch(`${SERVER_URL}/deleteRecord`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                table: currentTable,
+                id: pkValue,
+                pkColumn: primaryKey   // FIX: always sent correctly from global
+            })
+        })
+        .then(res => res.text())
+        .then(result => {
+            if (result === '1') {
+                document.getElementById('message').textContent = 'Record deleted successfully';
+                loadTableData();
+            } else {
+                alert('Delete failed: ' + result);
+            }
+        })
+        .catch(err => {
+            alert('Error: ' + err.message);
+        });
+    }
+
+    // ── Build the form fields ──
+    function generateForm(rowData) {
+        const formDiv = document.getElementById('formFields');
+        formDiv.innerHTML = '';
+
+        tableColumns.forEach((col, idx) => {
+            const wrapper = document.createElement('div');
+            wrapper.style.marginBottom = '10px';
+
+            const label = document.createElement('label');
+            label.textContent = col + ':';
+
+            const br = document.createElement('br');
+
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.id = 'field_' + col;
+            // FIX: assign .value directly — no HTML escaping needed here
+            input.value = rowData ? (rowData[idx] !== null ? rowData[idx] : '') : '';
+            input.style.width = '300px';
+
+            wrapper.appendChild(label);
+            wrapper.appendChild(br);
+            wrapper.appendChild(input);
+            formDiv.appendChild(wrapper);
+        });
+    }
+
+    // ── Save: server decides INSERT or UPDATE based on whether ID exists ──
+    function saveRecord() {
+        const pkIndex = tableColumns.indexOf(primaryKey);
+        const formData = {
+            table: currentTable,
+            data: {},
+            isNew: !isEditMode   // true = INSERT, false = UPDATE
+        };
+
+        tableColumns.forEach(col => {
+            const input = document.getElementById('field_' + col);
+            formData.data[col] = input ? input.value.trim() : '';
+        });
+
+        // FIX: client-side guard — if editing, pk field must not be empty
+        if (isEditMode && !formData.data[primaryKey]) {
+            alert('Primary key (' + primaryKey + ') cannot be empty when updating.');
+            return;
+        }
+
+        fetch(`${SERVER_URL}/saveRecord`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(formData)
+        })
+        .then(res => res.text())
+        .then(result => {
+            if (result === '1') {
+                document.getElementById('message').textContent =
+                    isEditMode ? 'Record updated successfully' : 'Record added successfully';
+                closeModal();
+                loadTableData();
+            } else {
+                alert('Save failed: ' + result);
+            }
+        })
+        .catch(err => {
+            alert('Error: ' + err.message);
+        });
+    }
+
+    function openModal() {
+        document.getElementById('modal').style.display = 'block';
+        document.getElementById('overlay').style.display = 'block';
+    }
+
+    function closeModal() {
+        document.getElementById('modal').style.display = 'none';
+        document.getElementById('overlay').style.display = 'none';
+        document.getElementById('formFields').innerHTML = '';
+    }
+</script>
+
+</body>
+</html>
