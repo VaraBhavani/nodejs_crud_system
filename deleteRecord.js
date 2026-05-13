@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const pool = require('../config/db');
+const pool = require('../config/dbConnection');
 
 router.post('/', async (req, res) => {
     const { table, id, pkColumn } = req.body;
