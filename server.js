@@ -28,7 +28,7 @@ fs.readdirSync(routesDir)
       const routeName = path.basename(file, '.js');   
       const route     = require(path.join(routesDir, file));
       app.use(`/${routeName}`, route);
-      console.log(`[server] Registered route: /${routeName}`);
+      console.log(`Registered route: /${routeName}`);
   });
 
 
