@@ -6,7 +6,7 @@ router.post('/', async (req, res) => {
     const { table, id, pkColumn } = req.body;
 
     if (!table || !/^[a-zA-Z0-9_]+$/.test(table)) {
-        return res.status(400).send('ERROR: Invalid table name');
+        return res.status(400).send('ERROR: You entered an invalid table name ');
     }
 
     if (!pkColumn || !/^[a-zA-Z0-9_]+$/.test(pkColumn)) {
